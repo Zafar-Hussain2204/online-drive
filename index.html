@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>📁 Online Drive</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      font-family: 'Segoe UI', sans-serif;
+      margin: 0;
+      padding: 1rem;
+      background: #f9f9f9;
+      color: #333;
+      text-align: center;
+    }
+    h1 { font-size: 1.8rem; margin-bottom: 1rem; }
+
+    #dropzone {
+      border: 2px dashed #aaa;
+      padding: 2rem;
+      margin-bottom: 1rem;
+      background: white;
+      border-radius: 10px;
+      transition: background 0.2s;
+    }
+
+    #dropzone.dragover {
+      background: #e0f7fa;
+    }
+
+    input[type="file"] {
+      display: none;
+    }
+
+    label[for="fileInput"] {
+      display: inline-block;
+      padding: 0.6rem 1.2rem;
+      background: #007bff;
+      color: white;
+      border-radius: 5px;
+      cursor: pointer;
+      margin-bottom: 1rem;
+    }
+
+    .progressBar {
+      height: 10px;
+      background: #eee;
+      margin-top: 5px;
+      border-radius: 5px;
+      overflow: hidden;
+    }
+
+    .progressBarFill {
+      height: 100%;
+      width: 0;
+      background: #28a745;
+      transition: width 0.2s;
+    }
+
+    ul {
+      list-style: none;
+      padding: 0;
+    }
+
+    li {
+      margin: 10px 0;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    a {
+      color: #007bff;
+      text-decoration: none;
+    }
+
+    button.delete {
+      background: #dc3545;
+      border: none;
+      color: white;
+      padding: 5px 10px;
+      border-radius: 5px;
+      cursor: pointer;
+    }
+
+    @media (max-width: 600px) {
+	  li {
+		flex-direction: column;
+		align-items: center; /* ← instead of flex-start */
+	  }
+      button.delete { margin-top: 5px; }
+    }
+  </style>
+</head>
+<body>
+
+  <h1>📂 Online Drive</h1>
+
+<form id="uploadForm" enctype="multipart/form-data">
+  <label for="fileInput">Choose File</label>
+  <input type="file" name="file" id="fileInput">
+</form>
+
+<div id="dropzone">Or drag & drop a file here</div>
+
+<div id="progressContainer"></div>
+
+<h2>Files</h2>
+<ul id="fileList"></ul>
+
+
+  <script type="text/JavaScript">
+	  // Add this JavaScript section to replace the existing script in your HTML
+
+const dropzone = document.getElementById('dropzone');
+const fileInput = document.getElementById('fileInput');
+const progressContainer = document.getElementById('progressContainer');
+const fileList = document.getElementById('fileList');
+
+// Add summary line above the list
+const summaryDiv = document.createElement('div');
+summaryDiv.style.marginTop = '1rem';
+summaryDiv.style.fontWeight = 'bold';
+fileList.parentNode.insertBefore(summaryDiv, fileList);
+
+// Format bytes to readable size
+function formatBytes(bytes) {
+   const sizes = ['B', 'KB', 'MB', 'GB'];
+   if (bytes === 0) return '0 B';
+   const i = Math.floor(Math.log(bytes) / Math.log(1024));
+   return (bytes / Math.pow(1024, i)).toFixed(1) + ' ' + sizes[i];
+}
+
+// Load list of files from server
+function loadFiles() {
+    console.log('Loading files...');
+    fetch('/files')
+    .then(res => {
+        if (!res.ok) {
+            throw new Error(`HTTP error! status: ${res.status}`);
+        }
+        return res.json();
+    })
+    .then(files => {
+        console.log('Files received:', files);
+        fileList.innerHTML = '';
+        let totalSize = 0;
+
+        if (!Array.isArray(files)) {
+            console.error('Expected array but got:', typeof files);
+            summaryDiv.textContent = '❌ Error loading files';
+            return;
+        }
+
+        files.forEach((file, index) => {
+            console.log(`Processing file ${index}:`, file);
+            
+            if (!file || typeof file.name !== 'string') {
+                console.error('Invalid file object:', file);
+                return;
+            }
+
+            totalSize += file.size || 0;
+            const li = document.createElement('li');
+            li.innerHTML = `
+              <a href="/uploads/${encodeURIComponent(file.name)}" target="_blank">${file.name}</a>
+              (${formatBytes(file.size || 0)})
+              <button class="delete" onclick="deleteFile('${encodeURIComponent(file.name)}')">Delete</button>
+            `;
+            fileList.appendChild(li);
+        });
+
+        summaryDiv.textContent = `📁 ${files.length} file(s) • 📦 ${formatBytes(totalSize)} total`;
+    })
+    .catch(error => {
+        console.error('Error loading files:', error);
+        summaryDiv.textContent = '❌ Error loading files';
+        fileList.innerHTML = '<li>Failed to load files. Check console for details.</li>';
+    });
+}
+
+// Initial load
+loadFiles();
+
+// Upload a single file
+function uploadFile(file) {
+  console.log('Uploading file:', file.name);
+  
+  const formData = new FormData();
+  formData.append('file', file);
+
+  const bar = document.createElement('div');
+  bar.className = 'progressBar';
+  const fill = document.createElement('div');
+  fill.className = 'progressBarFill';
+  bar.appendChild(fill);
+  progressContainer.appendChild(bar);
+
+  const xhr = new XMLHttpRequest();
+  xhr.open('POST', '/upload', true);
+
+  xhr.upload.addEventListener('progress', e => {
+    if (e.lengthComputable) {
+      const percent = (e.loaded / e.total) * 100;
+      fill.style.width = percent + '%';
+    }
+  });
+
+  xhr.onload = () => {
+    console.log('Upload response:', xhr.responseText);
+    fill.style.width = '100%';
+    setTimeout(() => bar.remove(), 1000);
+    
+    // Reload files after successful upload
+    if (xhr.status === 200) {
+        loadFiles();
+    } else {
+        console.error('Upload failed with status:', xhr.status);
+        alert('Upload failed.');
+    }
+  };
+
+  xhr.onerror = () => {
+    console.error('Upload error');
+    alert('Upload failed.');
+    bar.remove();
+  };
+
+  xhr.send(formData);
+}
+
+// Handle file picker input
+fileInput.addEventListener('change', () => {
+  if (fileInput.files.length > 0) {
+    uploadFile(fileInput.files[0]);
+  }
+});
+
+// Handle drag and drop
+dropzone.addEventListener('dragover', e => {
+  e.preventDefault();
+  dropzone.classList.add('dragover');
+});
+
+dropzone.addEventListener('dragleave', () => {
+  dropzone.classList.remove('dragover');
+});
+
+dropzone.addEventListener('drop', e => {
+  e.preventDefault();
+  dropzone.classList.remove('dragover');
+  if (e.dataTransfer.files.length > 0) {
+    uploadFile(e.dataTransfer.files[0]);
+  }
+});
+
+// Delete a file
+function deleteFile(filename) {
+  if (!confirm(`Delete "${decodeURIComponent(filename)}"?`)) return;
+
+  fetch('/files/' + filename, { method: 'DELETE' })
+    .then(response => {
+        if (response.ok) {
+            loadFiles();
+        } else {
+            throw new Error('Delete failed');
+        }
+    })
+    .catch(error => {
+        console.error('Delete error:', error);
+        alert('Failed to delete file.');
+    });
+}
+
+	</script>
+
+</body>
+</html>
